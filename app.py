@@ -9,78 +9,109 @@ from bson import ObjectId, json_util
 load_dotenv()
 app = Flask(__name__)
 
-mongodb_connection_addr = os.environ.get("MONGODB_CONNECTION", "mongodb://localhost:27017/")
-db_name = os.environ.get("DATABASE_NAME", "db_library")
-if not db_name:
-    raise ValueError("The DATABASE_NAME environment variable is not set or is empty.")
+# Konfigurasi Koneksi
+# Pastikan di file .env isinya: MONGO_URI=mongodb://localhost:27017/
+mongodb_connection_addr = os.environ.get("MONGO_URI", "mongodb://localhost:27017/")
+db_name = os.environ.get("DB_NAME", "db_inventory_management") # Default ke Inventory
 
 # Connect to MongoDB
-print(f'Connect to {mongodb_connection_addr}...')
-client = MongoClient(mongodb_connection_addr)
+print(f'Connecting to MongoDB at {mongodb_connection_addr}...')
+try:
+    client = MongoClient(mongodb_connection_addr)
+    db = client[db_name]    # Menggunakan database 'db_inventory_management'
+    collection = db['items'] # Menggunakan collection 'items'
+    print(f"--> Berhasil terkoneksi ke Database: {db_name}")
+    print(f"--> Menggunakan Collection: items")
+except Exception as e:
+    print(f"Error connecting to MongoDB: {e}")
 
-db = client[db_name]  # connect and use database
-collection = db['books']  # use collections object
+# --- ROUTES API ---
 
-
-# Test API Health
+# 1. Test API Health
 @app.route('/check')
-def hello():
-    """Endpoint for check database connection"""
+def check_connection():
+    """Endpoint untuk cek koneksi database"""
     try:
-        # The `ping` method checks the health of the connection
         client.admin.command('ping')
-        return jsonify({"message": "MongoDB connection is healthy."})
+        return jsonify({
+            "status": "success",
+            "message": "MongoDB connection is healthy.",
+            "database": db_name
+        })
     except Exception as e:
-        return jsonify(f"MongoDB connection error: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
 
-# Create
+# 2. Create (Tambah Barang)
 @app.route('/create', methods=['POST'])
 def create():
-    """Endpoint for insert data"""
+    """Endpoint untuk input barang baru"""
     data = request.get_json()
 
-    # Insert data into MongoDB
-    result = collection.insert_one(data)
+    # Validasi sederhana
+    if not data:
+        return jsonify({"message": "No data provided"}), 400
 
-    return jsonify({"message": "Document created successfully", "id": str(result.inserted_id)})
+    try:
+        # Insert data into MongoDB
+        result = collection.insert_one(data)
+        return jsonify({
+            "message": "Barang berhasil ditambahkan", 
+            "id": str(result.inserted_id)
+        }), 201
+    except Exception as e:
+        return jsonify({"message": f"Gagal menambah data: {e}"}), 500
 
-# Read
-@app.route('/read')
+# 3. Read (Lihat Semua Barang)
+@app.route('/read', methods=['GET'])
 def read():
-    """Endpoint for read data"""
-    # Retrieve all documents from MongoDB
-    # db.books.find()
-    records = collection.find().sort("_id", -1)
-    data = list(records)
+    """Endpoint untuk melihat semua data barang"""
+    try:
+        # Ambil semua data, urutkan dari yang terbaru (_id desc)
+        records = collection.find().sort("_id", -1)
+        
+        # Bersihkan format data agar _id menjadi string (supaya rapi di Postman)
+        data = []
+        for doc in records:
+            doc['_id'] = str(doc['_id'])
+            data.append(doc)
 
-    # Serialize BSON types using json_util
-    json_data = json_util.dumps(data)
-    return json_data
+        return jsonify(data), 200
+    except Exception as e:
+        return jsonify({"message": f"Error fetch data: {e}"}), 500
 
-# Update
+# 4. Update (Edit Stok/Lokasi/Info)
 @app.route('/update/<id>', methods=['PUT'])
 def update(id):
-    """Endpoint for update data"""
+    """Endpoint untuk update data berdasarkan ID"""
     data = request.get_json()
-    print(f'Update for books _id : {id}')
-    # Update data in MongoDB
-    result = collection.update_one({"_id": ObjectId(id)}, {"$set": data})
-    print(result)
-    if result.modified_count > 0:
-        return jsonify({"message": "Document updated successfully"})
-    else:
-        return jsonify({"message": "Query Executed, No Document Updated"})
+    print(f'Updating item _id : {id}')
+    
+    try:
+        # Update data in MongoDB
+        # Menggunakan ObjectId(id) untuk mencari dokumen yang tepat
+        result = collection.update_one({"_id": ObjectId(id)}, {"$set": data})
+        
+        if result.matched_count > 0:
+            return jsonify({"message": "Data barang berhasil diupdate"}), 200
+        else:
+            return jsonify({"message": "ID tidak ditemukan"}), 404
+    except Exception as e:
+        return jsonify({"message": f"Gagal update: {e}"}), 400
 
-# Delete
+# 5. Delete (Hapus Barang)
 @app.route('/delete/<id>', methods=['DELETE'])
 def delete(id):
-    """Endpoint for delete data"""
-    # Delete data from MongoDB
-    result = collection.delete_one({"_id": ObjectId(id)})
-    if result.deleted_count > 0:
-        return jsonify({"message": "Document deleted successfully"})
-    else:
-        return jsonify({"message": "Document not found"})
+    """Endpoint untuk hapus data berdasarkan ID"""
+    try:
+        result = collection.delete_one({"_id": ObjectId(id)})
+        
+        if result.deleted_count > 0:
+            return jsonify({"message": "Barang berhasil dihapus"}), 200
+        else:
+            return jsonify({"message": "ID tidak ditemukan"}), 404
+    except Exception as e:
+        return jsonify({"message": f"Gagal hapus: {e}"}), 400
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    # Menjalankan aplikasi di port 5000
+    app.run(debug=True, port=5000)
